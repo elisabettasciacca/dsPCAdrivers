@@ -21,8 +21,7 @@ plotDriversDS <- function(pcs.name = NULL,
                           p_adj = NULL,
                           verbose = FALSE) {
 
-  # DataSHIELD security checks ---------------------------------------------------
-
+  # checks (it should only receive strings with the name of the objecs in the server)
   if (!is.character(pcs.name) || length(pcs.name) != 1) {
     stop("pcs.name must be a single character string specifying server object name", call. = FALSE)
   }
@@ -31,9 +30,11 @@ plotDriversDS <- function(pcs.name = NULL,
     stop("vars.name must be a single character string specifying server object name", call. = FALSE)
   }
 
+  # resolve names in the server env to get the objects
   pcs <- eval(parse(text = pcs.name), envir = parent.frame())
   vars <- eval(parse(text = vars.name), envir = parent.frame())
 
+  # checks on the retrieved objects
   if (is.null(pcs)) stop("Object '", pcs.name, "' not found on server", call. = FALSE)
   if (is.null(vars)) stop("Object '", vars.name, "' not found on server", call. = FALSE)
 
@@ -49,6 +50,7 @@ plotDriversDS <- function(pcs.name = NULL,
     stop("Objects '", pcs.name, "' and '", vars.name, "' must have same number of rows", call. = FALSE)
   }
 
+  # truncate to n_pc if required (optional)
   if (n_pc > ncol(pcs)) {
     if (verbose) message("n_pc exceeds available PCs, using all ", ncol(pcs), " PCs")
     n_pc <- ncol(pcs)
@@ -58,8 +60,7 @@ plotDriversDS <- function(pcs.name = NULL,
   # Rename columns from comp.1, comp.2... to PC1, PC2...
   colnames(pcs) <- paste0("PC", seq_len(ncol(pcs)))
 
-  # Clean variables data ---------------------------------------------------------
-
+  # Clean variables data
   vars_clean <- clean_vars_data(
     vars = vars,
     na_threshold = na_drop_threshold,
@@ -70,14 +71,14 @@ plotDriversDS <- function(pcs.name = NULL,
     stop("No valid variables remaining after filtering", call. = FALSE)
   }
 
-  # Compute associations ---------------------------------------------------------
-
+  # Compute associations
   if (verbose) message("Computing associations for ", ncol(vars_clean),
                        " variables and ", n_pc, " PCs")
 
   pc_names <- colnames(pcs)
   var_names <- colnames(vars_clean)
 
+  # build a df with all variabile × PC combinations
   combinations <- expand.grid(
     feature = factor(var_names, levels = var_names),
     pc = factor(pc_names, levels = pc_names),
@@ -87,6 +88,7 @@ plotDriversDS <- function(pcs.name = NULL,
   combinations$feature <- as.character(combinations$feature)
   combinations$pc <- as.character(combinations$pc)
 
+  # compute associations for each variabile-PC pair through mapply
   pvals <- mapply(
     FUN = compute_single_association,
     feature_name = combinations$feature,
@@ -100,8 +102,7 @@ plotDriversDS <- function(pcs.name = NULL,
     SIMPLIFY = TRUE
   )
 
-  # Build results ----------------------------------------------------------------
-
+  # Build results
   results <- data.frame(
     Feature = combinations$feature,
     PC = combinations$pc,
@@ -112,6 +113,7 @@ plotDriversDS <- function(pcs.name = NULL,
   results$Feature <- factor(results$Feature, levels = var_names)
   results$PC <- factor(results$PC, levels = pc_names)
 
+  # multiple testing correction
   if (!is.null(p_adj)) {
     if (verbose) message("Applying ", p_adj, " correction")
     results$pvalue <- p.adjust(results$pvalue, method = p_adj)
@@ -121,8 +123,7 @@ plotDriversDS <- function(pcs.name = NULL,
   results$Feature <- as.character(results$Feature)
   results$PC <- as.character(results$PC)
 
-  # Prepare output ---------------------------------------------------------------
-
+  # Prepare output (only aggregated data - no individual data)
   output <- list(
     results = results,
     pc_names = pc_names,
@@ -139,8 +140,15 @@ plotDriversDS <- function(pcs.name = NULL,
 }
 
 # Helper functions -------------------------------------------------------------
-
+#' @title Get minimum observations threshold from DataSHIELD disclosure settings
+#' @description Queries the DataSHIELD server disclosure settings and returns
+#'   the minimum number of observations allowed, computed as the maximum between
+#'   \code{nfilter.tab} and \code{nfilter.subset}. Falls back to 3 if either
+#'   setting is missing or \code{NA}.
+#' @return A single numeric value representing the minimum observations threshold.
+#'
 #' @importFrom dsBase listDisclosureSettingsDS
+#' @noRd
 .getMinObsSetting <- function() {
   settings <- dsBase::listDisclosureSettingsDS()
 
@@ -155,7 +163,7 @@ plotDriversDS <- function(pcs.name = NULL,
 
 clean_vars_data <- function(vars, na_threshold, verbose = FALSE) {
 
-  # Replace infinite values with NA using lapply
+  # Convert Inf/-Inf to NA using lapply
   vars[] <- lapply(vars, function(x) {
     if (is.numeric(x)) {
       x[is.infinite(x)] <- NA
@@ -202,6 +210,31 @@ clean_vars_data <- function(vars, na_threshold, verbose = FALSE) {
   return(vars)
 }
 
+
+
+#' @title Compute association between a single variable and a single PC
+#'
+#' @description Tests the association between one variable and one principal
+#'   component score, selecting the appropriate statistical test based on the
+#'   variable type. For numeric variables, uses Pearson correlation
+#'   (parametric) or Spearman correlation (non-parametric). For categorical
+#'   variables, uses one-way ANOVA (parametric) or Kruskal-Wallis
+#'   (non-parametric). Returns \code{NA} if the number of complete cases falls
+#'   below the DataSHIELD disclosure threshold, or if a categorical variable
+#'   has fewer than two levels or any level with too few observations.
+#'
+#' @param feature_name Character string. Name of the variable column in
+#'   \code{vars}.
+#' @param pc_name Character string. Name of the PC column in \code{pcs}.
+#' @param pcs Matrix or data frame of PC scores (samples × PCs).
+#' @param vars Data frame of variables (samples × features).
+#' @param parametric Logical. Use parametric tests? Default \code{TRUE}.
+#' @param verbose Logical. Print diagnostic messages? Default \code{FALSE}.
+#'
+#' @return A single numeric p value, or \code{NA_real_} if the association
+#'   could not be computed.
+#'
+#' @noRd
 compute_single_association <- function(feature_name,
                                        pc_name,
                                        pcs,
@@ -209,6 +242,7 @@ compute_single_association <- function(feature_name,
                                        parametric,
                                        verbose = FALSE) {
 
+  # extract data & check number of NAs
   pc_values <- pcs[, pc_name]
   feature_values <- vars[[feature_name]]
 
@@ -223,6 +257,7 @@ compute_single_association <- function(feature_name,
   pc_values <- pc_values[complete_cases]
   feature_values <- feature_values[complete_cases]
 
+  # compute the statistical test
   if (is.numeric(feature_values)) {
     method <- if (parametric) "pearson" else "spearman"
     test_result <- cor.test(pc_values, feature_values, method = method)
