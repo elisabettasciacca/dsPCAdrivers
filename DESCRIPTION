@@ -1,0 +1,17 @@
+Package: dsPCAdrivers
+Title: Plot variables most influencing your PCs - Server Side
+Version: 0.0.0.9000
+Authors@R: 
+    person("Elisabetta", "Sciacca", , "e.sciacca@qmul.ac.uk", role = c("aut", "cre"))
+Description: Generate tile plots showing correlations between PCs and variables - Server Side.
+License: LGPL (>= 3)
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
+Imports:
+    stats,
+    car
+Suggests:
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
+Additional_repositories: https://cran.obiba.org/
