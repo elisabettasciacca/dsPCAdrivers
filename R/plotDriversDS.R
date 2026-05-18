@@ -21,22 +21,32 @@ plotDriversDS <- function(pcs.name = NULL,
                           p_adj = NULL,
                           verbose = FALSE) {
 
-  # checks (it should only receive strings with the name of the objecs in the server)
+  # Validate argument types (function only accepts object names as strings)
   if (!is.character(pcs.name) || length(pcs.name) != 1) {
-    stop("pcs.name must be a single character string specifying server object name", call. = FALSE)
+    stop("pcs.name must be a single character string specifying a server object name", call. = FALSE)
   }
 
   if (!is.character(vars.name) || length(vars.name) != 1) {
-    stop("vars.name must be a single character string specifying server object name", call. = FALSE)
+    stop("vars.name must be a single character string specifying a server object name", call. = FALSE)
   }
 
-  # resolve names in the server env to get the objects
-  pcs <- eval(parse(text = pcs.name), envir = parent.frame())
-  vars <- eval(parse(text = vars.name), envir = parent.frame())
+  valid_p_adj_methods <- c("holm", "hochberg", "hommel", "bonferroni", "BH", "BY", "fdr", "none")
+  if (!is.null(p_adj) && !p_adj %in% valid_p_adj_methods) {
+    stop("'p_adj' must be one of: ", paste(valid_p_adj_methods, collapse = ", "), call. = FALSE)
+  }
 
-  # checks on the retrieved objects
-  if (is.null(pcs)) stop("Object '", pcs.name, "' not found on server", call. = FALSE)
-  if (is.null(vars)) stop("Object '", vars.name, "' not found on server", call. = FALSE)
+  # Resolve object names in the server environment
+  pcs <- tryCatch(
+    eval(parse(text = pcs.name), envir = parent.frame()),
+    error = function(e) stop("Object '", pcs.name, "' not found on server", call. = FALSE)
+  )
+  vars <- tryCatch(
+    eval(parse(text = vars.name), envir = parent.frame()),
+    error = function(e) stop("Object '", vars.name, "' not found on server", call. = FALSE)
+  )
+
+  if (is.null(pcs))  stop("Object '", pcs.name,  "' is NULL on server", call. = FALSE)
+  if (is.null(vars)) stop("Object '", vars.name, "' is NULL on server", call. = FALSE)
 
   if (!is.matrix(pcs) && !is.data.frame(pcs)) {
     stop("Object '", pcs.name, "' must be a matrix or data frame", call. = FALSE)
@@ -78,7 +88,10 @@ plotDriversDS <- function(pcs.name = NULL,
   pc_names <- colnames(pcs)
   var_names <- colnames(vars_clean)
 
-  # build a df with all variabile × PC combinations
+  # Retrieve disclosure threshold once, then pass it to each association test
+  threshold <- .getMinObsSetting()
+
+  # Build a data frame with all variable × PC combinations
   combinations <- expand.grid(
     feature = factor(var_names, levels = var_names),
     pc = factor(pc_names, levels = pc_names),
@@ -88,16 +101,17 @@ plotDriversDS <- function(pcs.name = NULL,
   combinations$feature <- as.character(combinations$feature)
   combinations$pc <- as.character(combinations$pc)
 
-  # compute associations for each variabile-PC pair through mapply
+  # Compute associations for each variable-PC pair via mapply
   pvals <- mapply(
     FUN = compute_single_association,
     feature_name = combinations$feature,
     pc_name = combinations$pc,
     MoreArgs = list(
-      pcs = pcs,
-      vars = vars_clean,
+      pcs       = pcs,
+      vars      = vars_clean,
       parametric = parametric,
-      verbose = verbose
+      threshold  = threshold,
+      verbose   = verbose
     ),
     SIMPLIFY = TRUE
   )
@@ -229,6 +243,9 @@ clean_vars_data <- function(vars, na_threshold, verbose = FALSE) {
 #' @param pcs Matrix or data frame of PC scores (samples × PCs).
 #' @param vars Data frame of variables (samples × features).
 #' @param parametric Logical. Use parametric tests? Default \code{TRUE}.
+#' @param threshold Integer. Minimum number of complete cases required, as
+#'   returned by \code{.getMinObsSetting()}. Passed in from the parent call to
+#'   avoid querying the disclosure settings once per pair.
 #' @param verbose Logical. Print diagnostic messages? Default \code{FALSE}.
 #'
 #' @return A single numeric p value, or \code{NA_real_} if the association
@@ -240,15 +257,14 @@ compute_single_association <- function(feature_name,
                                        pcs,
                                        vars,
                                        parametric,
+                                       threshold,
                                        verbose = FALSE) {
 
-  # extract data & check number of NAs
+  # Extract data and filter to complete cases
   pc_values <- pcs[, pc_name]
   feature_values <- vars[[feature_name]]
 
   complete_cases <- !is.na(pc_values) & !is.na(feature_values)
-
-  threshold <- .getMinObsSetting()
 
   if (sum(complete_cases) < threshold) {
     return(NA_real_)
@@ -257,7 +273,7 @@ compute_single_association <- function(feature_name,
   pc_values <- pc_values[complete_cases]
   feature_values <- feature_values[complete_cases]
 
-  # compute the statistical test
+  # Select and run the appropriate statistical test
   if (is.numeric(feature_values)) {
     method <- if (parametric) "pearson" else "spearman"
     test_result <- cor.test(pc_values, feature_values, method = method)
