@@ -12,6 +12,10 @@ Imports:
     stats,
     car
 Suggests:
-    testthat (>= 3.0.0)
+    testthat (>= 3.0.0),
+    withr,
+    DSLite,
+    DSI,
+    dsBase
 Config/testthat/edition: 3
 Additional_repositories: https://cran.obiba.org/

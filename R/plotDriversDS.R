@@ -71,7 +71,7 @@ plotDriversDS <- function(pcs.name = NULL,
   colnames(pcs) <- paste0("PC", seq_len(ncol(pcs)))
 
   # Clean variables data
-  vars_clean <- clean_vars_data(
+  vars_clean <- dsPCAdrivers:::clean_vars_data(
     vars = vars,
     na_threshold = na_drop_threshold,
     verbose = verbose
@@ -89,7 +89,7 @@ plotDriversDS <- function(pcs.name = NULL,
   var_names <- colnames(vars_clean)
 
   # Retrieve disclosure threshold once, then pass it to each association test
-  threshold <- .getMinObsSetting()
+  threshold <- dsPCAdrivers:::.getMinObsSetting()
 
   # Build a data frame with all variable × PC combinations
   combinations <- expand.grid(
@@ -103,7 +103,7 @@ plotDriversDS <- function(pcs.name = NULL,
 
   # Compute associations for each variable-PC pair via mapply
   pvals <- mapply(
-    FUN = compute_single_association,
+    FUN = dsPCAdrivers:::compute_single_association,
     feature_name = combinations$feature,
     pc_name = combinations$pc,
     MoreArgs = list(
@@ -162,7 +162,7 @@ plotDriversDS <- function(pcs.name = NULL,
 #' @return A single numeric value representing the minimum observations threshold.
 #'
 #' @importFrom dsBase listDisclosureSettingsDS
-#' @noRd
+#' @keywords internal
 .getMinObsSetting <- function() {
   settings <- dsBase::listDisclosureSettingsDS()
 
@@ -175,6 +175,23 @@ plotDriversDS <- function(pcs.name = NULL,
   return(max(n_tab, n_subset))
 }
 
+#' Clean and validate a variables data frame
+#'
+#' Prepares a data frame of clinical or technical variables for association
+#' testing by removing columns that are uninformative or unsuitable: infinite
+#' values are coerced to \code{NA}, then zero-variance, data-sparse, and
+#' ID-like columns are dropped.
+#'
+#' @param vars A data frame of variables (samples as rows, variables as
+#'   columns).
+#' @param na_threshold Integer. Minimum number of non-\code{NA} values required
+#'   for a column to be retained.
+#' @param verbose Logical. If \code{TRUE}, messages are printed when columns
+#'   are removed. Default is \code{FALSE}.
+#'
+#' @return A data frame with unsuitable columns removed.
+#'
+#' @keywords internal
 clean_vars_data <- function(vars, na_threshold, verbose = FALSE) {
 
   # Convert Inf/-Inf to NA using lapply
@@ -251,7 +268,7 @@ clean_vars_data <- function(vars, na_threshold, verbose = FALSE) {
 #' @return A single numeric p value, or \code{NA_real_} if the association
 #'   could not be computed.
 #'
-#' @noRd
+#' @keywords internal
 compute_single_association <- function(feature_name,
                                        pc_name,
                                        pcs,
